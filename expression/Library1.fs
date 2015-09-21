@@ -259,15 +259,3 @@ let Simplify x =
     let (isSimplified, e) = Expand x |> SimplifyImpl false in e
     
 
-
-let Tokenize (value: System.String) = 
-    let value = value.Replace(" ", "")
-    let value = value.Replace("e^(", "e(")
-    let value = value.Replace("(", " ( ")
-    let value = value.Replace(")", " ) ")
-    let value = value.Replace("+", " + ")
-    let value = value.Replace("-", " - ")
-    let value = value.Replace("*", " * ")
-    let value = value.Replace("/", " / ")
-    let value = value.Replace("^", " ^ ")
-    value.Trim().Split([|' '|]) |> Seq.toList |> List.filter(fun e -> e.Length > 0)
