@@ -106,8 +106,7 @@ let RemoveSameFactors lst1 lst2 =
     Set.toList ((set lst1) - intersect), Set.toList ((set lst2) - intersect)
 
 let rec Muln lst = 
-    List.fold (*) (Const 1.) lst
-
+    List.fold ( * ) (Const 1.) lst
 
 let rec Reverse x = 
     match x with
@@ -279,9 +278,10 @@ let rec SimplifyImpl isSimplified x =
     | Pow(e, Const(1.)) -> e |> SimplifyImpl true
     | Pow(e, Const(0.)) -> true, Const(1.) 
     | Pow(Const(1.), e) -> true, Const(1.) 
+    | Pow(Pow(x, n1), n2) -> Pow(x, n1 * n2) |> Expand |> SimplifyImpl true
     // multiply
-    | Mul(Const(n), e) when n = 0. -> true, Const(0.)
-    | Mul(Const(n), e) when n = 1. -> e |> Expand |> SimplifyImpl true
+    | Mul(Const(0.), e) -> true, Const(0.)
+    | Mul(Const(1.), e) -> e |> Expand |> SimplifyImpl true
     | Mul(Const(n1), Mul(Const(n2), e)) -> Const(n1 * n2) * e |> Expand |> SimplifyImpl true
     | Mul(e1, e2) when e1 = e2 -> Pow(e1, Const(2.)) |> SimplifyImpl true
     | Mul(e1, Pow(e2, n)) when e1 = e2 -> Pow(e1, (n + Const(1.))) |> SimplifyImpl true
@@ -326,8 +326,6 @@ let Simplify x =
     let (isSimplified, e) = Expand x |> SimplifyImpl false in e
     
 
-
-
 //-------------------------------------------------------------------------------------------------
 // differentiate
 //-------------------------------------------------------------------------------------------------
@@ -349,8 +347,6 @@ let Order e x =
     let (c, t) = Dismantle e in
     OrderImpl e x
 
-
-         
 
 let Differentiate(e, x, times) =
     let rec DifferentiateImpl term x times =

@@ -59,6 +59,8 @@ printfn "22"
 Format(Differentiate(4. * x * x + 2. * x, x, 2));;
 printfn "23"
 Format(Integrate(4. * x * x + 2. * y + 3., x));;
+printfn "24"
+Format(Differentiate(1. / x, x, 1));;
 
 
 printfn "-- end -- "
