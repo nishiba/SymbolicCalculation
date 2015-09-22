@@ -19,6 +19,14 @@ type Expression =
     static member ( - ) (x, y) = Sub(x, y)
     static member ( * ) (x, y) = Mul(x, y)
     static member ( / ) (x, y) = Div(x, y)
+    static member ( + ) (x, n) = Add(x, Const(n))
+    static member ( - ) (x, n) = Sub(x, Const(n))
+    static member ( * ) (x, n) = Mul(x, Const(n))
+    static member ( / ) (x, n) = Div(x, Const(n))
+    static member ( + ) (n, y) = Add(Const(n), y)
+    static member ( - ) (n, y) = Sub(Const(n), y)
+    static member ( * ) (n, y) = Mul(Const(n), y)
+    static member ( / ) (n, y) = Div(Const(n), y)
 
 
 let (|Op|_|) (x : Expression) =
@@ -70,6 +78,9 @@ let rec Dismantle x =
         let (n1, y1) = Dismantle e1 in
         let (n2, y2) = Dismantle e2 in
         n1 * n2, y1 * y2
+    | Div(e, Const(n)) ->
+        let (m, y) = Dismantle e in
+        m / n, y
     | _ -> 1., x
 
 let LargerThan x y = 
@@ -80,12 +91,11 @@ let LargerThan x y =
     else
         false
 
-let rec FactorsImpl x lst = 
-    match x with
-    | Mul(e1, e2) -> FactorsImpl e2 ( FactorsImpl e1 lst)
-    | _ -> x::lst
-
 let Factors x = 
+    let rec FactorsImpl x lst = 
+        match x with
+        | Mul(e1, e2) -> FactorsImpl e2 ( FactorsImpl e1 lst)
+        | _ -> x::lst
     FactorsImpl x []
 
 let HasSameFactor x y =
@@ -96,10 +106,46 @@ let RemoveSameFactors lst1 lst2 =
     Set.toList ((set lst1) - intersect), Set.toList ((set lst2) - intersect)
 
 let rec Muln lst = 
-    match lst with
-    | [] -> Const(1.)
-    | x::xs -> x * (Muln xs)
+    List.fold (*) (Const 1.) lst
 
+
+let rec Reverse x = 
+    match x with
+    | Const(n) -> Const( 1. / n)
+    | Var(s) -> Pow(x, Const(-1.))
+    | Neg(e) -> Neg(Reverse(e))
+    | Mul(e1, e2) -> Mul(Reverse(e1), Reverse(e2))
+    | Pow(e1, e2) -> Pow(e1, -e2)
+    | Div(e1, e2) -> Div(e2, e1)
+    | _ -> Pow(x, Const(-1.))
+
+let rec MulnReversed lst = 
+    Muln (List.map Reverse lst)
+
+
+let Elements x =
+    let rec ElementImpl x lst =
+        match x with
+        | Const(n) -> lst
+        | Op(op, e1, e2) -> ElementImpl e1 (ElementImpl e2 lst)
+        | Func(f, e) -> ElementImpl e lst
+        | _ -> x::lst
+    Set.toList (set (ElementImpl x []))
+
+let Terms x =
+    let rec TermsImpl x lst = 
+        match x with
+        | Add(e1, e2) -> TermsImpl e1 (TermsImpl e2 lst)
+        | _ -> x::lst
+    TermsImpl x []
+
+let rec Addn lst =
+    List.fold (+) (Const 0.) lst
+
+let rec Depends e x = 
+    List.exists (fun n -> n = x) (Elements e)
+
+    
 
 //-------------------------------------------------------------------------------------------------
 // Format
@@ -152,11 +198,13 @@ let rec SortImpl isSorted x =
     | CommutativeOp(op, e1, e2) when LargerThan e1 e2 -> op(e2, e1) |> SortImpl true
     // add
     | Add(e1, Add(e2, e3)) when LargerThan e1 e2 -> Add(e2, Add(e1, e3)) |> SortImpl true
+    | Add(Add(e1, e2), e3) -> Add(e1, Add(e2, e3)) |> SortImpl true
     | Add(Add(e1, e2), Add(e3, e4)) when LargerThan e2 e3 -> Add(Add(e1, e3), Add(e2, e4)) |> SortImpl true
     // subtract
     | Sub(Add(e1, e2), e3) when LargerThan e2 e3 -> Add(Sub(e1, e3), e2) |> SortImpl true
     // multiply
     | Mul(e1, Mul(e2, e3)) when LargerThan e1 e2 -> Mul(e2, Mul(e1, e3))|> SortImpl true
+    | Mul(Mul(e1, e2), e3) -> Mul(e1, Mul(e2, e3)) |> SortImpl true
     | Mul(Mul(e1, e2), Mul(e3, e4)) when LargerThan e2 e3 -> Mul(Mul(e1, e3), Mul(e2, e4))|> SortImpl true
     // binary operator
     | Op(op, e1, e2) -> 
@@ -209,6 +257,7 @@ let rec SimplifyImpl isSimplified x =
     // neg
     | Neg(Neg(e)) -> e |> Expand |> SimplifyImpl true
     // add
+    | Add(Const(n), e) when n = 0. -> e |> Expand |> SimplifyImpl true
     | Add(e1, Neg(e2)) -> Sub(e1, e2) |> Expand |> SimplifyImpl true
     | Add(e1, e2) when
         let (n1, x1) = Dismantle e1 in
@@ -226,21 +275,41 @@ let rec SimplifyImpl isSimplified x =
         let (n1, x1) = Dismantle e1 in
         let (n2, x2) = Dismantle e2 in
         Const(n1 + n2) * x1 + e3|> Expand |> SimplifyImpl true
+    // power
+    | Pow(e, Const(1.)) -> e |> SimplifyImpl true
+    | Pow(e, Const(0.)) -> true, Const(1.) 
+    | Pow(Const(1.), e) -> true, Const(1.) 
     // multiply
-    | Mul(e1, e2) when e1 = e2 -> Pow(e1, Const(2.)) |> SimplifyImpl true
+    | Mul(Const(n), e) when n = 0. -> true, Const(0.)
     | Mul(Const(n), e) when n = 1. -> e |> Expand |> SimplifyImpl true
     | Mul(Const(n1), Mul(Const(n2), e)) -> Const(n1 * n2) * e |> Expand |> SimplifyImpl true
+    | Mul(e1, e2) when e1 = e2 -> Pow(e1, Const(2.)) |> SimplifyImpl true
+    | Mul(e1, Pow(e2, n)) when e1 = e2 -> Pow(e1, (n + Const(1.))) |> SimplifyImpl true
+    | Mul(Pow(e1, n1), Pow(e2, n2)) when e1 = e2 -> Pow(e1, n1 + n2) |> SimplifyImpl true
+    | Mul(e1, Mul(e2, e3)) when 
+        let (isSimplified, e) = Mul(e2, e3) |> SimplifyImpl false in
+        not isSimplified
+        -> 
+        let (isSimplified, e) = e1 * e2 |> Expand |> SimplifyImpl false in
+        if isSimplified then
+            e * e3 |> Expand |> SimplifyImpl true
+        else
+            let (isSimplified, e) = e1 * e3 |> Expand |> SimplifyImpl false in
+            if isSimplified then
+                e * e2 |> Expand |> SimplifyImpl true
+            else
+                false, x
     // subtract
     | Sub(e1, e2) when e1 = e2 -> true, Const(0.)
     | Sub(e1, Neg(e2)) -> Add(e1, e2) |> Expand |> SimplifyImpl true
     // divide
     | Div(e, Const(n)) when n = 1. -> e |> Expand |> SimplifyImpl true
-    | Div(e1, e2) when HasSameFactor e1 e2
+    | Div(e, Const(n)) -> Const(1. / n) * e |> Expand |> SimplifyImpl true
+    | Div(e1, e2) 
         ->
-        let (n1, x1) = Dismantle e1 in
-        let (n2, x2) = Dismantle e2 in
-        let (y1, y2) = RemoveSameFactors (Factors x1) (Factors x2) in
-        Const(n1 / n2) * (Muln y1) / (Muln y2) |> Expand |> SimplifyImpl true
+        let (n1, x1) = Dismantle e1 
+        let (n2, x2) = Dismantle e2 
+        Const(n1 / n2) * x1 * (MulnReversed (Factors x2)) |> Expand |> SimplifyImpl true
     // binary operator
     | Op(op, e1, e2) -> 
         let (isSimplified1, a1) = SimplifyImpl false e1 in
@@ -257,3 +326,54 @@ let Simplify x =
     let (isSimplified, e) = Expand x |> SimplifyImpl false in e
     
 
+
+
+//-------------------------------------------------------------------------------------------------
+// differentiate
+//-------------------------------------------------------------------------------------------------
+let rec OrderImpl e x = 
+    if e = x then
+        1.
+    else
+        match e with
+        | Mul(e1, e2) -> (OrderImpl e1 x) + (OrderImpl e2 x)
+        | Pow(e1, Const(n)) -> (OrderImpl e1 x) * n
+        | Sub(e1, e2) -> (OrderImpl e1 x) - (OrderImpl e2 x)
+        | Const(n) -> 0.
+        | Var(s) -> 0.
+        | Neg(e1) -> OrderImpl e1 x
+        | _ -> failwith(sprintf "error in OrderImpl [%A]" e) 
+    
+let Order e x =
+    let e = Simplify e in
+    let (c, t) = Dismantle e in
+    OrderImpl e x
+
+
+         
+
+let Differentiate(e, x, times) =
+    let rec DifferentiateImpl term x times =
+        if times <= 0 then
+            term
+        else
+            if Depends term x then
+                let order = Order term x in
+                (DifferentiateImpl (order * term / x) x (times - 1))
+            else
+                Const(0.)
+    if times <= 0 then
+        e
+    else
+        let e = Simplify e in
+        (Simplify (Addn (List.map (fun t -> DifferentiateImpl t x times) (Terms e))))
+
+//-------------------------------------------------------------------------------------------------
+// integrate
+//-------------------------------------------------------------------------------------------------
+let Integrate(e, x) =
+    let IngegrateImpl term x =
+        let order = Order term x in
+        term * x / (order + 1.)
+    (Simplify (Addn (List.map (fun t -> IngegrateImpl t x) (Terms (Simplify e)))))
+        

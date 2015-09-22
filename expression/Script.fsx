@@ -47,6 +47,18 @@ printfn "17"
 Format(Simplify( (x + (-y)) ));;
 printfn "18"
 Format((x + c1) * (y + c1) * z);;
+printfn "19"
+Format(Simplify(Pow(x, c1) * Pow(x, c2)));;
+printfn "20"
+Format(Simplify(Pow(x, c1)));;
+printfn "21"
+Elements(c2 * x + (x * y + c2 * x + z));;
+printfn "22"
+Format(Differentiate(3. * x * x + 2. * x, x, 1));;
+printfn "22"
+Format(Differentiate(4. * x * x + 2. * x, x, 2));;
+printfn "23"
+Format(Integrate(4. * x * x + 2. * y + 3., x));;
 
 
-
+printfn "-- end -- "
