@@ -282,12 +282,11 @@ let rec SimplifyImpl isSimplified x =
     // multiply
     | Mul(Const(0.), e) -> true, Const(0.)
     | Mul(Const(1.), e) -> e |> Expand |> SimplifyImpl true
-    | Mul(Const(n1), Mul(Const(n2), e)) -> Const(n1 * n2) * e |> Expand |> SimplifyImpl true
     | Mul(e1, e2) when e1 = e2 -> Pow(e1, Const(2.)) |> SimplifyImpl true
-    | Mul(e1, Pow(e2, n)) when e1 = e2 -> Pow(e1, (n + Const(1.))) |> SimplifyImpl true
-    | Mul(Pow(e1, n1), Pow(e2, n2)) when e1 = e2 -> Pow(e1, n1 + n2) |> SimplifyImpl true
+    | Mul(e1, Pow(e2, n)) when e1 = e2 -> Pow(e1, (n + Const(1.))) |> Expand|> SimplifyImpl true
+    | Mul(Pow(e1, n1), Pow(e2, n2)) when e1 = e2 -> Pow(e1, n1 + n2) |> Expand|> SimplifyImpl true
     | Mul(e1, Mul(e2, e3)) when 
-        let (isSimplified, e) = Mul(e2, e3) |> SimplifyImpl false in
+        let (isSimplified, e) = Mul(e2, e3) |> Expand |> SimplifyImpl false in
         not isSimplified
         -> 
         let (isSimplified, e) = e1 * e2 |> Expand |> SimplifyImpl false in
@@ -298,12 +297,12 @@ let rec SimplifyImpl isSimplified x =
             if isSimplified then
                 e * e2 |> Expand |> SimplifyImpl true
             else
-                false, x
+                isSimplified, x
     // subtract
     | Sub(e1, e2) when e1 = e2 -> true, Const(0.)
     | Sub(e1, Neg(e2)) -> Add(e1, e2) |> Expand |> SimplifyImpl true
     // divide
-    | Div(e, Const(n)) when n = 1. -> e |> Expand |> SimplifyImpl true
+    | Div(e, Const(1.)) -> e |> Expand |> SimplifyImpl true
     | Div(e, Const(n)) -> Const(1. / n) * e |> Expand |> SimplifyImpl true
     | Div(e1, e2) 
         ->
