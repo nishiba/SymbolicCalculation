@@ -59,6 +59,12 @@ let (|Linear|_|) (x : Expression) =
     | Mul(e1, e2) -> Some(Mul, e1, e2)
     | _ -> None
 
+let rec (|Constant|_|) (x : Expression) =
+    match x with
+    | Op(op, Constant(c1), Constant(c2)) -> Some(x)
+    | Const(n) -> Some(x)
+    | Neg(Constant(c)) -> Some(x)
+    | _ -> None
 
 let IsPrimitive (x : Expression) : bool = 
     match x with
@@ -68,6 +74,7 @@ let IsPrimitive (x : Expression) : bool =
 
 let rec Dismantle x = 
     match x with
+    | Constant(c) -> c, Const(1.)
     | Mul(Const(n), e) -> 
         let (n1, e1) = Dismantle e in
         n * n1, e1
@@ -81,13 +88,15 @@ let rec Dismantle x =
     | Div(e, Const(n)) ->
         let (m, y) = Dismantle e in
         m / n, y
-    | _ -> 1., x
+    | _ -> Const(1.), x
 
 let LargerThan x y = 
     let (n1, e1) = Dismantle x in
     let (n2, e2) = Dismantle y in
     if e1 > e2 then
         true
+    elif e1 = e2 then
+        x > y
     else
         false
 
@@ -241,89 +250,110 @@ let rec ExpandImpl isExpanded x =
 let Expand x =
     let (isExpand, e) = Sort x |> ExpandImpl false in e
 
+//-------------------------------------------------------------------------------------------------
+// SimplifyConstant
+//-------------------------------------------------------------------------------------------------
+let SimplifyConstant x = 
+    let rec ToFraction x = 
+        match x with
+        | Div(Const(c1), Const(c2)) -> x 
+        | Op(op, c1, c2) ->
+            op((ToFraction c1), (ToFraction c2))
+        | Const(c) -> x / 1.
+        | _ -> x
+    let rec SimplifyConstantImpl x = 
+        match x with
+        | Div(Const(n1), Const(n2)) -> x
+        | Add(Div(Const(a1), Const(b1)), Div(Const(a2), Const(b2))) -> Const(a1 * b2 + a2 * b1) / Const(b1 * b2)
+        | Sub(Div(Const(a1), Const(b1)), Div(Const(a2), Const(b2))) -> Const(a1 * b2 - a2 * b1) / Const(b1 * b2)
+        | Mul(Div(Const(a1), Const(b1)), Div(Const(a2), Const(b2))) -> Const(a1 * a2) / Const(b1 * b2)
+        | Div(Div(Const(a1), Const(b1)), Div(Const(a2), Const(b2))) -> Const(a1 * b2) / Const(b1 * a2)
+        | Neg(Const(n)) -> Const(-1.0 * n)
+        | Neg(c) -> -1.0 * (SimplifyConstantImpl c)
+        | Op(op, c1, c2) ->
+            let e1 = SimplifyConstantImpl c1 in
+            let e2 = SimplifyConstantImpl c2 in
+            if e1 <> c1 || e2 <> c2 then
+                op(e1, e2) |> SimplifyConstantImpl
+            else
+                op(e1, e2)
+        | _ -> x
+    let rec Reduce x =
+        match x with
+        | Div(c, Const(1.)) -> c |> Reduce
+        | _ -> x
+    x |> ToFraction |> SimplifyConstantImpl |> Reduce
 
 //-------------------------------------------------------------------------------------------------
 // Simplify
 //-------------------------------------------------------------------------------------------------
-let rec SimplifyImpl isSimplified x = 
-    match x with
-    // constant
-    | Add(Const(n1), Const(n2)) -> true, Const(n1 + n2)
-    | Sub(Const(n1), Const(n2)) -> true, Const(n1 - n2)
-    | Mul(Const(n1), Const(n2)) -> true, Const(n1 * n2)
-    | Div(Const(n1), Const(n2)) -> true, Const(n1 / n2)
-    | Neg(Const(n)) -> true, Const(-1.0 * n)
-    // neg
-    | Neg(Neg(e)) -> e |> Expand |> SimplifyImpl true
-    // add
-    | Add(Const(n), e) when n = 0. -> e |> Expand |> SimplifyImpl true
-    | Add(e1, Neg(e2)) -> Sub(e1, e2) |> Expand |> SimplifyImpl true
-    | Add(e1, e2) when
-        let (n1, x1) = Dismantle e1 in
-        let (n2, x2) = Dismantle e2 in
-        x1 = x2
-        -> 
-        let (n1, x1) = Dismantle e1 in
-        let (n2, x2) = Dismantle e2 in
-        Const(n1 + n2) * x1 |> Expand |> SimplifyImpl true
-    | Add(e1, Add(e2, e3)) when
-        let (n1, x1) = Dismantle e1 in
-        let (n2, x2) = Dismantle e2 in
-        x1 = x2
-        -> 
-        let (n1, x1) = Dismantle e1 in
-        let (n2, x2) = Dismantle e2 in
-        Const(n1 + n2) * x1 + e3|> Expand |> SimplifyImpl true
-    // power
-    | Pow(e, Const(1.)) -> e |> SimplifyImpl true
-    | Pow(e, Const(0.)) -> true, Const(1.) 
-    | Pow(Const(1.), e) -> true, Const(1.) 
-    | Pow(Pow(x, n1), n2) -> Pow(x, n1 * n2) |> Expand |> SimplifyImpl true
-    // multiply
-    | Mul(Const(0.), e) -> true, Const(0.)
-    | Mul(Const(1.), e) -> e |> Expand |> SimplifyImpl true
-    | Mul(e1, e2) when e1 = e2 -> Pow(e1, Const(2.)) |> SimplifyImpl true
-    | Mul(e1, Pow(e2, n)) when e1 = e2 -> Pow(e1, (n + Const(1.))) |> Expand|> SimplifyImpl true
-    | Mul(Pow(e1, n1), Pow(e2, n2)) when e1 = e2 -> Pow(e1, n1 + n2) |> Expand|> SimplifyImpl true
-    | Mul(e1, Mul(e2, e3)) when 
-        let (isSimplified, e) = Mul(e2, e3) |> Expand |> SimplifyImpl false in
-        not isSimplified
-        -> 
-        let (isSimplified, e) = e1 * e2 |> Expand |> SimplifyImpl false in
-        if isSimplified then
-            e * e3 |> Expand |> SimplifyImpl true
-        else
-            let (isSimplified, e) = e1 * e3 |> Expand |> SimplifyImpl false in
-            if isSimplified then
-                e * e2 |> Expand |> SimplifyImpl true
+let Simplify x = 
+    let rec SimplifyImpl firstTry x = 
+        let ChangeTermOrder op e1 e2 e3 =
+            let e12 = op(e1, e2) |> Expand |> SimplifyImpl true in
+            if e12 <> op(e1, e2) then
+                op(e12, e3) |> Expand |> SimplifyImpl true
             else
-                isSimplified, x
-    // subtract
-    | Sub(e1, e2) when e1 = e2 -> true, Const(0.)
-    | Sub(e1, Neg(e2)) -> Add(e1, e2) |> Expand |> SimplifyImpl true
-    // divide
-    | Div(e, Const(1.)) -> e |> Expand |> SimplifyImpl true
-    | Div(e, Const(n)) -> Const(1. / n) * e |> Expand |> SimplifyImpl true
-    | Div(e1, e2) 
-        ->
-        let (n1, x1) = Dismantle e1 
-        let (n2, x2) = Dismantle e2 
-        Const(n1 / n2) * x1 * (MulnReversed (Factors x2)) |> Expand |> SimplifyImpl true
-    // binary operator
-    | Op(op, e1, e2) -> 
-        let (isSimplified1, a1) = SimplifyImpl false e1 in
-        let (isSimplified2, a2) = SimplifyImpl false e2 in
-        if isSimplified1 || isSimplified2 then
-            op(a1, a2) |> Expand |> SimplifyImpl true
-        else
-            (isSimplified, x)
-    // other
-    | _ -> isSimplified, x
-
-
-let Simplify x =
-    let (isSimplified, e) = Expand x |> SimplifyImpl false in e
-    
+                let e13 = op(e1, e3) |> Expand |> SimplifyImpl true in
+                if e13 <> op(e1, e3) then
+                    op(e13, e2) |> Expand |> SimplifyImpl true
+                else
+                    x
+        match x with
+        // constant
+        | Add(Const(n1), Const(n2)) -> Const(n1 + n2)
+        | Sub(Const(n1), Const(n2)) -> Const(n1 - n2)
+        | Mul(Const(n1), Const(n2)) -> Const(n1 * n2)
+        | Mul(Const(n1), Div(Const(n2), Const(n3))) -> Const(n1 * n2) / Const(n3)
+        | Div(Const(n1), Const(1.)) -> Const(n1)
+        | Div(Const(n1), Const(n2)) -> x
+        | Neg(Const(n)) -> Const(-1.0 * n)
+        // neg
+        | Neg(Neg(e)) -> e |> Expand |> SimplifyImpl true
+        // constant
+        | Constant(c) -> c
+        // add
+        | Add(Const(0.), e) -> e |> Expand |> SimplifyImpl true
+        | Add(e1, Neg(e2)) -> Sub(e1, e2) |> Expand |> SimplifyImpl true
+        | Add(e1, e2) when
+            let (n1, x1) = Dismantle e1 in
+            let (n2, x2) = Dismantle e2 in
+            x1 = x2
+            -> 
+            let (n1, x1) = Dismantle e1 in
+            let (n2, x2) = Dismantle e2 in
+            (SimplifyConstant (n1 + n2)) * x1 |> Expand |> SimplifyImpl true
+        // power
+        | Pow(e, Const(1.)) -> e |> SimplifyImpl true
+        | Pow(e, Const(0.)) -> Const(1.) 
+        | Pow(Const(1.), e) -> Const(1.) 
+        | Pow(Pow(x, n1), n2) -> Pow(x, n1 * n2) |> Expand |> SimplifyImpl true
+        // multiply
+        | Mul(Const(0.), e) -> Const(0.)
+        | Mul(Const(1.), e) -> e |> Expand |> SimplifyImpl true
+        | Mul(e1, e2) when e1 = e2 -> Pow(e1, Const(2.)) |> Expand |> SimplifyImpl true
+        | Mul(e1, Pow(e2, n)) when e1 = e2 -> Pow(e1, (n + Const(1.))) |> Expand|> SimplifyImpl true
+        | Mul(Pow(e1, n1), Pow(e2, n2)) when e1 = e2 -> Pow(e1, n1 + n2) |> Expand|> SimplifyImpl true
+        // subtract
+        | Sub(e1, e2) when e1 = e2 -> Const(0.)
+        | Sub(e1, Neg(e2)) -> Add(e1, e2) |> Expand |> SimplifyImpl true
+        // binary operator
+        | Op(op, e1, e2) when firstTry -> 
+            let e1 = e1 |> Expand |> SimplifyImpl true in
+            let e2 = e2 |> Expand |> SimplifyImpl true in
+            op(e1, e2) |> Expand |> SimplifyImpl false
+        // change order
+        | Add(e1, Add(e2, e3)) -> ChangeTermOrder Add e1 e2 e3
+        | Mul(e1, Mul(e2, e3)) -> ChangeTermOrder Mul e1 e2 e3
+        // divide
+        | Div(e1, e2) 
+            ->
+            let (n1, x1) = Dismantle e1
+            let (n2, x2) = Dismantle e2
+            (SimplifyConstant n1 / n2) * x1 * (MulnReversed (Factors x2)) |> Expand |> SimplifyImpl true
+        // other
+        | _ -> x
+    Expand x |> SimplifyImpl true
 
 //-------------------------------------------------------------------------------------------------
 // differentiate
@@ -336,14 +366,13 @@ let rec OrderImpl e x =
         | Mul(e1, e2) -> (OrderImpl e1 x) + (OrderImpl e2 x)
         | Pow(e1, Const(n)) -> (OrderImpl e1 x) * n
         | Sub(e1, e2) -> (OrderImpl e1 x) - (OrderImpl e2 x)
-        | Const(n) -> 0.
         | Var(s) -> 0.
         | Neg(e1) -> OrderImpl e1 x
+        | Constant(c) -> 0.
         | _ -> failwith(sprintf "error in OrderImpl [%A]" e) 
     
 let Order e x =
     let e = Simplify e in
-    let (c, t) = Dismantle e in
     OrderImpl e x
 
 

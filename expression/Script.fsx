@@ -63,6 +63,8 @@ printfn "24"
 Format(Differentiate(1. / x, x, 1));;
 
 
-Format(Simplify(Const(1.) / Const(2.)));;
+Format(Simplify((Const(1.) * x) / Const(2.)));;
+Format(SimplifyConstant(Const(1.) / Const(2.) + Const(3.)));;
+
 
 printfn "-- end -- "
