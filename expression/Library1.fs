@@ -153,7 +153,19 @@ let rec Addn lst =
 let rec Depends e x = 
     List.exists (fun n -> n = x) (Elements e)
 
-    
+   
+
+
+let getGcd (n : int) (m : int) : int =
+    let rec getGcdImpl n m =
+        if n = 0 then
+            m
+        else
+            getGcdImpl (m % n) n
+    if n > m then
+        getGcdImpl m n
+    else
+        getGcdImpl n m
 
 //-------------------------------------------------------------------------------------------------
 // Format
@@ -268,7 +280,6 @@ let SimplifyConstant x =
         | Sub(Div(Const(a1), Const(b1)), Div(Const(a2), Const(b2))) -> Const(a1 * b2 - a2 * b1) / Const(b1 * b2)
         | Mul(Div(Const(a1), Const(b1)), Div(Const(a2), Const(b2))) -> Const(a1 * a2) / Const(b1 * b2)
         | Div(Div(Const(a1), Const(b1)), Div(Const(a2), Const(b2))) -> Const(a1 * b2) / Const(b1 * a2)
-        | Neg(Const(n)) -> Const(-1.0 * n)
         | Neg(c) -> -1.0 * (SimplifyConstantImpl c)
         | Op(op, c1, c2) ->
             let e1 = SimplifyConstantImpl c1 in
@@ -281,6 +292,15 @@ let SimplifyConstant x =
     let rec Reduce x =
         match x with
         | Div(c, Const(1.)) -> c |> Reduce
+        | Div(Const(c1), Const(c2)) when c1 % 1.0 = 0. && c2 % 1.0 = 0.
+            -> 
+            let gcd = (getGcd (int c1) (int c2)) in
+            let n1 = c1 / (float gcd) in
+            let n2 = c2 / (float gcd) in
+            if n2 = 1. then
+                Const(n1)
+            else
+                Const(n1) / Const(n2)
         | _ -> x
     x |> ToFraction |> SimplifyConstantImpl |> Reduce
 
